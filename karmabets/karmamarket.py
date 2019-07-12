@@ -29,6 +29,19 @@ class _Stock:
         self.num_shares = 0
         self.cost = 0
 
+    @property
+    def id(self):
+        try:
+            return self.market.marketplace.option_id_handler[self]
+        except KeyError:
+            return None
+    def save(self):
+        if not self.id and self.market.id:
+            self.market.marketplace.sql_add_option(self.market, self)
+        elif self.id:
+            raise Exception("Stock already saved.")
+        else:
+            raise Exception("Market must be saved first.")
     def buy(self, player, amount):
         if not self.market.is_open:
             return
@@ -60,16 +73,13 @@ class _Category:
         self.category_id = category_id
     def add_judge(self, judge):
         self.judges.append(judge)
-        self.marketplace._add_judge(self.category_id, judge)
+        if self.marketplace.autosave:
+            self.marketplace.sql_add_judge(self.category_id, judge)
 class _Market:
-    def __init__(self, marketplace, market_id, text, author, category, close_time, rules, b, comments):
+    def __init__(self, marketplace, text, author, category, close_time, rules, b, comments):
         self.marketplace = marketplace
-        self.id  = market_id
         self.text = text
         self.author = author
-#        self.category_id = category_id
-#        for c in self.marketplace.categories:
-            
         self.category = category
         self.close_time = close_time
         self.rules = rules
@@ -78,6 +88,14 @@ class _Market:
         self.stocks = []
         self.close()
 
+    @property
+    def id(self):
+        try:
+            return self.marketplace.id_handler[self]
+        except KeyError:
+            return None
+#    def save_to_db(self):
+#        self.marketplace.sql_new_market(self)    
     def open(self):
         self.is_open = True
         for stock in self.stocks:
@@ -85,11 +103,22 @@ class _Market:
 
     def close(self):
         self.is_open = False
+    def save(self):
+        if not self.id:
+            self.marketplace.sql_new_market(self)
+            for o in self.stocks:
+                o.save()
 
     def add_option(self, text):
+        if self.is_open:
+            raise Exception("Can't add option if market is open")
         stock = _Stock(text, self)
         self.stocks.append(stock)
-        self.marketplace._add_option(self, stock)
+        for s in self.stocks:
+            s.cost = self._find_current_price(s)
+        if self.marketplace.autosave:
+            self.marketplace.sql_add_option(self, stock)
+        return stock
     def change_comments(self, comments):
         self.comments = comments
         self.marketplace._change_comments(self, comments)
@@ -136,44 +165,56 @@ class _Market:
         return "<Market: {}>".format(self.text)
 
 class Marketplace:
-    def __init__(self):
+    def __init__(self, autosave = False):
+        self.autosave = False # temporarily just to add default "misc" and "Admin".
         self.con = sql.connect("karmamarket.sql")
         self.cur = self.con.cursor()
         self.markets = []
         self.categories = []
-        self.bank = {}
+        #TODO: is this safe?
+        self.bank = {"admin": 0}
+        misc = _Category(self, "None", "None", "", 0)
+        misc.add_judge("admin")
+        misc.add_judge("sje46")
+        self.categories = [misc]
+        self.id_handler = {}
+        self.option_id_handler = {}
+        self.autosave = autosave
 
 
-
-    def new_market(self, text, author="admin", category=None, close_time=None, rules=None, b=100, comments=""):
+    def new_market(self, text, author="admin", category=None, close_time=None, rules=None, b=100, comments="", autosave=False):
         """Creates a new prediction market."""
+        autosave_market = autosave
+        market = _Market(self, text, author, category, close_time, rules, b, comments)
+        if not category: 
+            category = self.categories[0]
+        if author not in category.judges:
+            raise Exception("Author is not a judge in this category")
+        self.markets.append(market)
+        if self.autosave and not autosave_market:
+            self.sql_new_market(market)
+        return market
+
+    def sql_new_market(self, market):
+        text, author, rules, close_time = market.text, market.author, market.rules, market.close_time
+        b, closed, comments = market.b, True, market.comments #TODO: fix closed, is_open
         self.cur.execute("""
             INSERT INTO markets
                 (text, author, rules, close_time, b, closed, comments)
             VALUES
                 (?, ?, ?, ?, ?, ?, ?)
-            """, (text, author, rules, close_time, b, True, comments))
+            """, (text, author, rules, close_time, b, closed, comments))
         self.cur.execute("""
             SELECT last_insert_rowid()""")
-        self.con.commit()
-       # for c in self.categories:
-       #     if c["short"] == category:
-       #         category = c
-       #         break
-        if not category: 
-            category = self.categories[0]
-        if author not in category.judges:
-            raise Exception("Author is not a judge in this category")
         market_id = self.cur.fetchone()[0]
-        market = _Market(self, market_id, text, author, category, close_time, rules, b, comments)
-        self.markets.append(market)
-
-        return market
+        self.id_handler[market] = market_id
+        self.con.commit()
 
     def create_new_player(self, name, money):
         """Creates a new player."""
         if name in self.bank.keys():
             return
+        self.bank[name] = money
         self.cur.execute("""
             INSERT INTO bank
                 (name, money, in_play)
@@ -181,9 +222,7 @@ class Marketplace:
                 (?, ?, 0)
             """, (name, money))
         self.con.commit()
-        self.bank[name] = money
     def create_new_category(self, short, long_, extra=""):
-#        self.categories.append(short, long_, extra)
         self.cur.execute("""
             INSERT INTO categories
                 (short, long, extra)
@@ -208,7 +247,8 @@ class Marketplace:
         self.con.commit()
 
 
-    def _add_option(self, market, option):
+#    def _add_option(self, market, option):
+    def sql_add_option(self, market, option):
         """Adds an option for a market to the database."""
         self.cur.execute("""
             INSERT INTO options 
@@ -219,7 +259,8 @@ class Marketplace:
         self.cur.execute("""
             SELECT last_insert_rowid()""")
         result = self.cur.fetchone()[0]
-        option.id = result
+        self.option_id_handler[option] = result
+#        option.id = result
         return result
     def _buy_share(self, option, player, amount):
         """Records a stock being bought or sold in the database."""
@@ -306,8 +347,6 @@ class Marketplace:
         president = self.new_market("Who will be president in 2020? A", category=category)
         for option in ("Vermin Supreme", "Donald Trump", "Richard Nixon's Head"):
             president.add_option(option)
-        #category = self.create_new_category("MISC", "Miscellaneous")
-        #president.set_category(category)
 
     def _load(self):
         """Creates objects from database."""
@@ -316,26 +355,22 @@ class Marketplace:
         results = self.cur.fetchall()
         for c in results:
             cat_id, short, long_, extra = c
-#            category = {"category_id" : cat_id, "short": short, "long": long_, "extra": extra, "judges": []}
             category = _Category(self, short, long_, extra, category_id=cat_id)
-            
             self.categories.append(category)
         self.cur.execute("""
             SELECT * FROM markets""")
         results = self.cur.fetchall()
         for m in results:
             m_id, text, author, rules, category_id, close_time, b, closed, comments = m
-            #category = "MISC"
-            #def __init__(self, marketplace, market_id, text, author, category, close_time, rules, b, comments):
             category = self.categories[0]
             for cat in self.categories:
                 if cat.category_id == category_id:
                     category = cat
                     break
-
-            loaded_market = _Market(self, m_id, text, author, category, close_time, rules, b, comments)
+            loaded_market = _Market(self, text, author, category, close_time, rules, b, comments)
             loaded_market.marketplace = self
-            loaded_market.id = m_id
+            self.id_handler[loaded_market] = m_id
+#            loaded_market.id = m_id
             self.markets.append(loaded_market)
             self.cur.execute("""
                 SELECT * FROM options
@@ -344,14 +379,14 @@ class Marketplace:
             for s in option_results:
                 option_id, market_id, text = s
                 loaded_stock = _Stock(text, loaded_market)
-                loaded_stock.id = option_id
+                self.option_id_handler[loaded_stock] = option_id
+#                loaded_stock.id = option_id
                 loaded_market.stocks.append(loaded_stock)
                 self.cur.execute("""
                     SELECT * FROM outstanding_shares
                     WHERE option_id = ?""", (option_id,))
                 shares_results = self.cur.fetchall()
                 for _, amount, player_id in shares_results:
-                    print(_, amount, player_id)
                     self.cur.execute("SELECT name FROM bank WHERE player_id = ?", (player_id,))
                     player_name = self.cur.fetchone()[0]
                     loaded_stock.num_shares += amount
@@ -374,21 +409,15 @@ class Marketplace:
             SELECT * FROM judges""")
         results = self.cur.fetchall()
         for p in results:
-            print(p)
             judge_id, player_id, cat_id = p
             self.cur.execute("""SELECT name FROM bank WHERE player_id=?""", (player_id,))
             players = self.cur.fetchone()
-            print(players)
             if not players: continue
             player = players[0]
             for c in self.categories:
                 if c.category_id == cat_id:
                     c.judges.append(player)
             
-#        self.num_shares += amount
-#        self.shares[player] += amount
-#        self.market._update_costs()
-#        self.market.marketplace._buy_share(self, player, amount)
     def _create_new_marketplace(self):
         """Creates a karmamarket database."""
         self.cur.execute("""

@@ -7,6 +7,7 @@ import karmamarket
 import datetime
 import time
 import traceback
+import random
 class Redditbot:
     def create_market_view(self, market):
         
@@ -25,7 +26,7 @@ class Redditbot:
             reply_text += "|**{}**|{}|{:.2f}|{}|{:.2f}|{:.2f}|{:.2f}\n".format(next(label), o.text, o.cost, o.num_shares, market._find_total_cost(o, 5), market._find_total_cost(o, 25), market._find_total_cost(o, 100))
         reply_text += "**b Value**: {}  \n**Category**: {}  \n".format(market.b, market.category if not hasattr(market.category, "long") else market.category.long)
         return reply_text
-    def create_new_market(self, comment):
+    def create_new_market(self, comment, autosave=False):
         name = comment.author.name
         market, category, closes, rules = "", "", "", ""
         options = []
@@ -44,8 +45,15 @@ class Redditbot:
                 market = line.partition(":")[2]
             elif first_word == "*" and len(split) > 1:
                 options.append(line.partition("*")[2])
+        if category:
+            for cat in self.mp.categories:
+                if cat.short == category:
+                    category = cat
+                    break
+        else: 
+            category = self.mp.categories[0]
 
-        new_market = self.mp.new_market(text=market, author=name, category=category, close_time=None, rules=rules)
+        new_market = self.mp.new_market(text=market, author=name, category=category, close_time=None, rules=rules, autosave=False)
         for o in options:
             new_market.add_option(o)
         return new_market
@@ -57,7 +65,7 @@ class Redditbot:
         # Creating a new prediction market.
         if len(first_line) == 2 and first_line[1] == "new_market":
             try:
-                new_market = self.create_new_market(item)
+                new_market = self.create_new_market(item, autosave=False)
             except Exception as e: 
                 raise Exception("Syntax is wrong: {}".format(e))
             market_view = self.create_market_view(new_market)
@@ -65,7 +73,16 @@ class Redditbot:
             and it will open.  Otherwise, respond with the predictbot_new_market command with the \
             required changes, paying attention to the syntax here: [TODO].  The previous attempt will\
             be garbage collected.\n\n---\n\n{}""".format(market_view)
-            item.author.message("Confirm market creation: [{}]".format(new_market.id), message)
+            if len(self.random_ids) > 100:
+                self.random_ids = {}
+            while True:
+                x = random.randrange(10000)
+                if x not in self.random_ids.keys():
+                    self.random_ids[x] = new_market
+                    break
+
+
+            item.author.message("Confirm market creation: [{}]".format(x), message)
 
         if type(item) is praw.models.reddit.message.Message:# and first_line.split()[0].lower() == "confirm":
             if item.body.lower().strip(".!?") == "myshares":
@@ -97,16 +114,17 @@ class Redditbot:
             if item.body.lower().strip(".!?") in ("confirm", "deny"):
                     
 
-                market_id = int(item.subject.split()[4].strip("[]"))
-                market = None
-                for m in self.mp.markets:
-                    if m.id == market_id:
-                        market = m
-                        break
+                #TODO: can't determine from market id, need new identifier
+                market_rand_id = int(item.subject.split()[4].strip("[]"))
+                try:
+                    market = self.random_ids[market_rand_id]
+                except: raise Exception("Market not found.")
+
                 if not market: return
                 if market.is_open: return
                 if market.comments: return
             if item.body.lower().strip(".!?") == "confirm":
+                market.save()
                 market.open()
                 title = "New Market: {}".format(market.text)
                 selftext_message = self.create_market_view(market)
@@ -138,6 +156,7 @@ class Redditbot:
                     print("C")
                     market = m
                     requested_stock = m.stocks[ascii_lowercase.index(option_label)]
+                    #TODO: thinks category is a string?
                     if item.author.name in m.category.judges:
                         print("redditbot: calling {}".format(requested_stock.text))
                         m.call(requested_stock)
@@ -361,6 +380,7 @@ class Redditbot:
         self.reddit = praw.Reddit("bot1")
         print(dir(self.reddit))
         self.updanda_dict = {}
+        self.random_ids = {}
         for m in self.mp.markets:
             self.updanda_dict[m] = {"submission": None, "comments": []}
             split = m.comments.split(";")
