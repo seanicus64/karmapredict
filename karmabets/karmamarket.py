@@ -20,14 +20,46 @@ import math
 #
 
 #TODO: make categories into objects so we can edit the judges
+#TODO: not keeping volume amounts after closing/re-opening
 class _Stock:
     def __init__(self, text, market):
         self.market = market
         self.b = market.b
         self.text = text
+
         self.shares = {}
         self.num_shares = 0
         self.cost = 0
+        self._open = None
+        self._close = None
+        self._high = None
+        self._low = None
+        self.volume = 0
+    @property
+    def open(self):
+        return self._open
+    @property
+    def close(self):
+        return self._close
+    @property
+    def high(self):
+        return self._high
+    @property
+    def low(self):
+        return self._low
+    @high.setter
+    def high(self, value):
+        if not self._high:
+            self._high = value
+        elif value > self._high:
+            self._high = value
+
+    @low.setter
+    def low(self, value):
+        if not self._low:
+            self._low = value
+        elif value < self._low:
+            self._low = value
 
     @property
     def id(self):
@@ -35,6 +67,16 @@ class _Stock:
             return self.market.marketplace.option_id_handler[self]
         except KeyError:
             return None
+    def update_candle(self):
+        self.low = self.cost
+        self.high = self.cost
+            
+            
+    def new_candle(self):
+        self._open = self.cost
+        self._high = self.cost
+
+        self._low = self.cost
     def save(self):
         if not self.id and self.market.id:
             self.market.marketplace.sql_add_option(self.market, self)
@@ -48,15 +90,31 @@ class _Stock:
         cost = self.market._find_total_cost(self, amount)
         if player not in self.shares:
             self.shares[player] = 0
+            self.shares[player] = {"amount": 0, "cost": 0}
+        #TODO: amount is going being 0
         if cost > self.market.marketplace.bank[player]:
             return
-        if amount + self.shares[player] < 0:
+        if amount + self.shares[player]["amount"] < 0:
             return
         self.market.marketplace.bank[player] -= cost
         self.num_shares += amount
-        self.shares[player] += amount
+        self.volume += abs(amount)
+        self.shares[player]["amount"] += amount
+        self.shares[player]["cost"] += cost
+        #before = (self.high, self.low)
         self.market._update_costs()
-        self.market.marketplace._buy_share(self, player, amount)
+        #after = self.high, self.low)
+#        self.update_candle()
+        if self.id:
+            self.market.marketplace._buy_share(self, player, amount, cost)
+            print("will update candles")
+            for stock in self.market.stocks:
+                self.market.marketplace.sql_update_candle(stock)
+            print("updated candles")
+            
+
+            self.market.marketplace.bank[player] -= cost
+            self.market.marketplace._change_player_amount(player, self.market.marketplace.bank[player])
 
     def __str__(self):
         return "{}\t{:.2f} [{}]".format(self.text, self.cost, self.num_shares)
@@ -100,6 +158,13 @@ class _Market:
         self.is_open = True
         for stock in self.stocks:
             stock.cost = 100/len(self.stocks)
+            stock._open = stock.cost
+            #stock.new_candle() #TODO: create candles at beginning of day, update them as we go along
+
+            try:
+                stock.update_candle()
+            except TypeError:
+                pass
 
     def close(self):
         self.is_open = False
@@ -119,14 +184,24 @@ class _Market:
         if self.marketplace.autosave:
             self.marketplace.sql_add_option(self, stock)
         return stock
+    def save_candle(self):
+        if not self.id: 
+            raise Exception
+        for o in self.stocks:
+            self.marketplace.sql_add_history(o)
+            o.new_candle()
+
     def change_comments(self, comments):
         self.comments = comments
         self.marketplace._change_comments(self, comments)
 
     def call(self, stock):
-        for player, amount in stock.shares.items():
+        if not self.id: return
+#        for player, amount in stock.shares.items():
+        for player in stock.shares.keys():
+            amount = stock.shares[player]["amount"]
             print("{} before: {}".format(player, self.marketplace.bank[player]))
-            self.marketplace.bank[player] += amount
+            self.marketplace.bank[player] += amount * 100
             self.marketplace._change_player_amount(player, self.marketplace.bank[player])
             print("{} after: {}".format(player, self.marketplace.bank[player]))
         self.marketplace._call(self)
@@ -153,6 +228,9 @@ class _Market:
     def _update_costs(self):
         for stock in self.stocks:
             stock.cost = self._find_current_price(stock)
+            if self.is_open:
+                stock.high = stock.cost
+                stock.low = stock.cost
         
     def __str__(self):
         string = self.text
@@ -194,6 +272,28 @@ class Marketplace:
         if self.autosave and not autosave_market:
             self.sql_new_market(market)
         return market
+    def sql_new_candle(self, option):
+        self.cur.execute("""
+            INSERT INTO history
+                (option_id, date, open, high, low, volume)
+            VALUES (?, datetime("now"), ?, ?, ?, 0)
+            """, (option.id, option.open, option.high, option.low))
+        self.con.commit()
+    def sql_update_candle(self, option):
+        print("bbbbbbb")
+        print(option.high, option.low, option.id)
+        self.cur.execute("""
+            UPDATE history set high = ?, low = ?, volume = ?
+            WHERE option_id = ? ORDER BY date DESC LIMIT 1 """, (option.high, option.low, option.volume, option.id))
+        self.con.commit()
+    def sql_add_history(self, option):
+        self.cur.execute("""
+            INSERT INTO history 
+                (option_id, date, open, high, low, close, volume)
+            VALUES
+                (?, date("now"), ?, ?, ?, ?, ?)""", (option.id, option.open, option.high, option.low, option.cost, option.volume))
+        
+        self.con.commit()
 
     def sql_new_market(self, market):
         text, author, rules, close_time = market.text, market.author, market.rules, market.close_time
@@ -262,7 +362,7 @@ class Marketplace:
         self.option_id_handler[option] = result
 #        option.id = result
         return result
-    def _buy_share(self, option, player, amount):
+    def _buy_share(self, option, player, amount, cost):
         """Records a stock being bought or sold in the database."""
         self.cur.execute("""
             SELECT player_id FROM bank 
@@ -278,16 +378,16 @@ class Marketplace:
             
             self.cur.execute("""
                 INSERT INTO outstanding_shares
-                    (player_id, amount, option_id)
+                    (player_id, amount, option_id, cost)
                 VALUES
-                    (?, ?, ?)
-                """, (player_id, amount, option_id))
+                    (?, ?, ?, ?)
+                """, (player_id, amount, option_id, cost))
         else:
             self.cur.execute("""
                 UPDATE outstanding_shares
-                set amount = amount + ?
+                SET amount = amount + ?, cost = cost + ?
                 WHERE player_id = ? AND option_id = ?
-                """, (amount, player_id, option_id))
+                """, (amount, cost, player_id, option_id))
 
         self.con.commit()
     def _call(self, market):
@@ -347,6 +447,8 @@ class Marketplace:
         president = self.new_market("Who will be president in 2020? A", category=category)
         for option in ("Vermin Supreme", "Donald Trump", "Richard Nixon's Head"):
             president.add_option(option)
+    def SQL_update_history(self, option):
+        pass
 
     def _load(self):
         """Creates objects from database."""
@@ -361,7 +463,7 @@ class Marketplace:
             SELECT * FROM markets""")
         results = self.cur.fetchall()
         for m in results:
-            m_id, text, author, rules, category_id, close_time, b, closed, comments = m
+            m_id, text, author, rules, category_id, close_time, b, closed,  comments = m
             category = self.categories[0]
             for cat in self.categories:
                 if cat.category_id == category_id:
@@ -378,6 +480,7 @@ class Marketplace:
             option_results = self.cur.fetchall()
             for s in option_results:
                 option_id, market_id, text = s
+                print(option_id)
                 loaded_stock = _Stock(text, loaded_market)
                 self.option_id_handler[loaded_stock] = option_id
 #                loaded_stock.id = option_id
@@ -386,13 +489,18 @@ class Marketplace:
                     SELECT * FROM outstanding_shares
                     WHERE option_id = ?""", (option_id,))
                 shares_results = self.cur.fetchall()
-                for _, amount, player_id in shares_results:
+                for _, amount, player_id, cost in shares_results:
+                    #TODO: save cost somewhere
                     self.cur.execute("SELECT name FROM bank WHERE player_id = ?", (player_id,))
                     player_name = self.cur.fetchone()[0]
                     loaded_stock.num_shares += amount
                     if not player_name in loaded_stock.shares.keys():
-                        loaded_stock.shares[player_name] = 0
-                    loaded_stock.shares[player_name] += amount
+                        loaded_stock.shares[player_name] = dict()
+                        loaded_stock.shares[player_name]["amount"] = 0
+                        loaded_stock.shares[player_name]["cost"] = 0
+#                        loaded_stock.shares[player_name] = 0
+                    loaded_stock.shares[player_name]["amount"] += amount
+                    loaded_stock.shares[player_name]["cost"] += cost
 
             loaded_market._update_costs()        
 
@@ -457,9 +565,19 @@ class Marketplace:
                 """)
         self.cur.execute("""
             CREATE TABLE IF NOT EXISTS outstanding_shares
-                (option_id INTEGER, amount UNSIGNED INTEGER, player_id INTEGER,
+                (option_id INTEGER, amount UNSIGNED INTEGER, player_id INTEGER, cost REAL,
                 FOREIGN KEY (option_id) REFERENCES options(option_id),
                 FOREIGN KEY (player_id) REFERENCES bank(player_id))
                 """)
-        self.create_new_category("MISC", "Miscellaneous")
+        self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS history
+                (option_id INTEGER, date REAL, open REAL, high REAL, low REAL, 
+                close REAL, volume INTEGER);""")
+        
+
+
+        try:
+            self.create_new_category("MISC", "Miscellaneous")
+        except: 
+            pass
         self.con.commit()
