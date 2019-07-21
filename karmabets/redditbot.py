@@ -387,7 +387,7 @@ class Redditbot:
             if begin_time != end_time:
                 #TODO: add history support
                 for m in self.mp.markets:
-                    self.mp.new_candle(m)
+                    m.new_candle()
                 pass
             self.update_scoreboard()
             begin=end
