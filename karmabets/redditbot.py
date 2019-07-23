@@ -9,18 +9,31 @@ import time
 import traceback
 import random
 class Redditbot:
-    def create_market_view(self, market):
+    footer = "\n-------\n|💰💰💰|[WTF even is this?](https://www.reddit.com/r/KarmaPredict/wiki/index/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/KarmaPredict)|This bot is still in beta; please send [us](https://www.reddit.com/message/compose?to=/r/KarmaPredict) any issues|💰💰💰\n|:-:|:-:|:-:|:-:|:-:|:-:|"
+    def create_market_view(self, market, submission=None):
         "Create a reddit message to represent the current market. Returns the formatted text."
-        reply_text =  "**ID**: #{}\n".format(market.id)
-        reply_text += "{}\n{}\n===\n".format("This market is CLOSED!" if not market.is_open else "", market.text)
-        reply_text += "Label|Option|Cost|Volume|Cost of 5|Cost of 25| Cost of 100\n"
-        reply_text += "  --:|:--   | --:|   --:|      --:|       --:|         --:\n"
+        
+        reply_text =  "**ID**: #{} {}  \n".format(market.id, "  \n**Submission**:{}".format(submission.permalink) if submission else "")
+        reply_text += "{}**{}**  \n\n".format("**This market is CLOSED!**  \n" if not market.is_open else "", market.text.lstrip())
+        reply_text += "Label|Option|Cost AKA Probability|Volume|Cost of 5|Cost of 25| Cost of 100\n"
+        reply_text += "  --:|:--   |:--                 |   --:|      --:|       --:|         --:\n"
         label = iter(ascii_lowercase.upper())
         for o in market.stocks:
-            reply_text += "|**{}**|{}|{:.2f}|{}|{:.2f}|{:.2f}|{:.2f}|\n".format(next(label), o.text, o.cost, o.num_shares,
+            reply_text += "|**{}**|{}|${:,.2f}|{}|${:,.2f}|${:,.2f}|${:,.2f}|\n".format(next(label), o.text, o.cost, o.num_shares,
                     market._find_total_cost(o, 5), market._find_total_cost(o, 25), market._find_total_cost(o, 100))
         
-        reply_text += "**b Value**: {}  \n**Category**: {}  \n".format(market.b, market.category if not hasattr(market.category, "long") else market.category.long)
+        reply_text += "\n**b Value**: {}  \n**Category**: {}  \n".format(market.b, market.category if not hasattr(market.category, "long") else market.category.long)
+
+        reply_text += "[How to play.](https://i.imgur.com/SatSnjJ.png)  \n"
+        #TODO: implement this, but in submission only.  imgur only for comments
+#        reply_text += "To buy seven shares of option A (reply directly to this):\n\n    buy A 5\n"
+#        reply_text += "To sell three shares of option B:\n\n    sell B 3\n"
+#        reply_text += "To buy $200 dollars worth of shares of option C:\n\n    buy $200 C\n\n"
+#        
+#        reply_text += "For each correct share, you will get $100  \nFor each wrong share, you get nothing!  \n"
+#        reply_text += "All redditors get $5000 by default!  \n"
+#        reply_text += "**Disclaimer**: This is fake money; you can't get free cash that easily!\n"
+        reply_text += self.footer
         return reply_text
 
     def create_new_market(self, comment, autosave=False):
@@ -45,13 +58,15 @@ class Redditbot:
                 options.append(line.partition("* ")[2])
         if category:
             for cat in self.mp.categories:
+                print(cat.short)
                 if cat.short == category:
                     category = cat
                     break
         else: 
             # Make it "None" category by default
             category = self.mp.categories[0]
-
+        if type(category) is str: 
+            raise Exception("Not a valid category")
         new_market = self.mp.new_market(text=market, author=name, category=category, close_time=None, rules=rules, autosave=False)
         for o in options:
             new_market.add_option(o)
@@ -67,7 +82,7 @@ class Redditbot:
         message = "Please ensure that the following market is correct. Respond with 'Confirm.'\
         and it will open.  Otherwise, respond with the predictbot_new_market command with the \
         required changes, paying attention to the syntax here: [TODO].  The previous attempt will\
-        be garbage collected.\n\n---\n\n{}""".format(market_view)
+        be garbage collected.\n\n---\n\n{}{}""".format(market_view, self.footer)
 
         # TODO: a silly hack to make sure that not too many markets are awaiting confirmation.
         if len(self.random_ids) > 100:
@@ -101,7 +116,8 @@ class Redditbot:
 
         for option in all_shares:
             message += "|{}|{:,}|${:,.2f}|{}|{}|\n".format(option.market.id, option.shares[name]["amount"], option.shares[name]["cost"], option.text, option.market.text)
-        message += "\n-------\n|[Info](https://www.reddit.com/r/KarmaPredict/wiki/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/KarmaPredict)|\n|:-:|:-:|:-:|"
+        message += self.footer
+#        message += "\n-------\n|[Info](https://www.reddit.com/r/KarmaPredict/wiki/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/KarmaPredict)|\n|:-:|:-:|:-:|"
 
         item.author.message("KarmaPredictBot: Your shares", message)
     def handle_confirm(self, item):
@@ -172,8 +188,8 @@ class Redditbot:
                 bank_table += "|{}    |{:.2f}     |{:.2f}    |{:.2f}    |\n\n".format(name, before, after, difference)
                 message += bank_table
                 redditor = self.reddit.redditor(name)
-                redditor.message("test", message)
-    def get_amount_from_money(self, command, money, item):
+                redditor.message("Market #{} has been settled.".format(market.id, message))
+    def get_amount_from_money(self, command, money, item, market, requested_stock):
         
         if command == "buy":
             temp_amount = 0
@@ -216,7 +232,6 @@ class Redditbot:
             elif word.startswith("#"): # finds the id for the market
                 market_id = int(word[1:])
         if not option_label: raise Exception("No option specified.")
-        #if not amount_label: raise Exception("No amount specified.") #TODO: default amount is 1
 
         # we find which market it is...
         if market_id:
@@ -227,7 +242,7 @@ class Redditbot:
 
         requested_stock = market.stocks[ascii_lowercase.index(option_label)]
         if amount_label.startswith("$"):
-            amount_of_shares = self.get_amount_from_money(command, int(amount_label[1:]), item)
+            amount_of_shares = self.get_amount_from_money(command, int(amount_label[1:]), item, market, requested_stock)
         else:
             amount_of_shares = int(amount_label)
 
@@ -241,7 +256,7 @@ class Redditbot:
         # If this was a comment, potentially make a new comment reply and watch it.
         if type(item) is praw.models.reddit.comment.Comment:
             if not self.check_if_submission_watched(item, market):
-                updandum = item.reply(self.create_market_view(market))
+                updandum = item.reply(self.create_market_view(market, submission=self.updanda_dict[market]["submission"]))
                 self.add_updandum(updandum, market)
     def get_market_from_submission(self, submission):
         "Gets the market from a submission object. Returns the market."
@@ -321,15 +336,17 @@ class Redditbot:
         option = share.text
         amount_before = share.shares[name]["amount"] - amount
         amount_after = share.shares[name]["amount"]
-
-        message =  "|Player|Bank Before|Bank After|Difference|Potential Profit|\n"
+        
+        message =  "Current Bank\n===\n"
+        message += "|Player|Bank Before|Bank After|Difference|Potential Profit|\n"
         message += "|:--   |        --:|       --:|    :-:   |       :-:      |\n"
-        message += "|{}    |{:.2f}     |{:.2f}    |{:.2f}    |{:.2f}          |\n\n".format(name, before, after, after-before, amount * 100)
+        message += "|{}    |${:,.2f}   |${:,.2f}  |  ${:,.2f}|${:,.2f}        |\n\n".format(name, before, after, after-before, amount * 100 - (after-before))
+        message += "Your Changed Shares\n===\n"
         message += "|Market ID|Option|Amount|Amount Change|\n"
         message += "|:--      |   --:|   --:|     :-:     |\n"
-        message += "|{}       |{}    |{}    |{}           |\n\n".format(market_id, option, amount_after, amount)
+        message += "|{}       |{}    |{}    |{}{}         |\n\n".format(market_id, option, amount_after, "-" if amount < 0 else "+", amount)
 
-        message += "\n-------\n|[Info](https://www.reddit.com/r/KarmaPredict/wiki/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/KarmaPredict)|\n|:-:|:-:|:-:|"
+        message += self.footer
         player.message("Predictbot: You bought shares", message)
 
     def get_pushshift(self, begin, end):
@@ -358,9 +375,11 @@ class Redditbot:
             time.sleep(10)
             end = int(datetime.datetime.now().timestamp()) - 10
             # Store all comments and messages so they can be processed later.
-            for comment in self.get_pushshift(begin, end):
-                #items.append(comment)
-                this_period.append(comment)
+            try:
+                for comment in self.get_pushshift(begin, end):
+                    #items.append(comment)
+                    this_period.append(comment)
+            except: continue
             for item in inbox_stream:
                 if not item: break
                 #if type(item) is praw.models.reddit.message.Message:
@@ -384,8 +403,8 @@ class Redditbot:
             this_period = next_period
             end_time = datetime.datetime.fromtimestamp(end)
             begin_time = datetime.datetime.fromtimestamp(begin)
-            if begin_time != end_time:
-                #TODO: add history support
+            if begin_time.day != end_time.day:
+                print("New day: {}".format(end_time.day))
                 for m in self.mp.markets:
                     m.new_candle()
                 pass
@@ -408,7 +427,7 @@ class Redditbot:
         submission = self.updanda_dict[market]["submission"]
         for u in comments + [submission]:
             #TODO: handle deletions, bans, archival after 6 months, etc
-            market_view = self.create_market_view(market)
+            market_view = self.create_market_view(market, submission if u is not submission else None)
             try:
                 u.edit(market_view)
             except Exception as err:
@@ -436,9 +455,10 @@ class Redditbot:
                     except:
                         continue
                     self.updanda_dict[m]["comments"].append(comment)
+
         self.read_everything()
 def main():
-    mp = karmamarket.Marketplace()
+    mp = karmamarket.Marketplace(autosave=True)
     mp._load()
     read_everything(mp)
 if __name__ == "__main__":
