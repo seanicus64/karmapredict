@@ -18,8 +18,10 @@ class Redditbot:
         reply_text += "Label|Option|Cost AKA Probability|Volume|Cost of 5|Cost of 25| Cost of 100\n"
         reply_text += "  --:|:--   |:--                 |   --:|      --:|       --:|         --:\n"
         label = iter(ascii_lowercase.upper())
-        for o in market.stocks:
-            reply_text += "|**{}**|{}|${:,.2f}|{}|${:,.2f}|${:,.2f}|${:,.2f}|\n".format(next(label), o.text, o.cost, o.num_shares,
+        sorted_stocks = reversed(sorted(market.stocks, key=lambda s: s.cost))
+        for o in sorted_stocks:
+            label = ascii_lowercase.upper()[market.stocks.index(o)]
+            reply_text += "|**{}**|{}|${:,.2f}|{}|${:,.2f}|${:,.2f}|${:,.2f}|\n".format(label, o.text, o.cost, o.num_shares,
                     market._find_total_cost(o, 5), market._find_total_cost(o, 25), market._find_total_cost(o, 100))
         
         reply_text += "\n**b Value**: {}  \n**Category**: {}  \n".format(market.b, market.category if not hasattr(market.category, "long") else market.category.long)
