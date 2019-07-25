@@ -156,8 +156,9 @@ class _Market:
             stock.cost = 100/len(self.stocks)
 
             # A new trading day starts now
-            stock._open = stock.cost
-            stock.update_candle()
+#            stock._open = stock.cost
+#            stock.update_candle()
+        self.new_candle()
 
     def close(self):
         "Closes the market, preventing buying and selling."

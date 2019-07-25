@@ -8,6 +8,7 @@ import datetime
 import time
 import traceback
 import random
+from pprint import pprint
 class Redditbot:
     footer = "\n-------\n|💰💰💰|[WTF even is this?](https://www.reddit.com/r/KarmaPredict/wiki/index/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/KarmaPredict)|This bot is still in beta; please send [us](https://www.reddit.com/message/compose?to=/r/KarmaPredict) any issues|💰💰💰\n|:-:|:-:|:-:|:-:|:-:|:-:|"
     def create_market_view(self, market, submission=None):
@@ -18,7 +19,7 @@ class Redditbot:
         reply_text += "Label|Option|Cost AKA Probability|Volume|Cost of 5|Cost of 25| Cost of 100\n"
         reply_text += "  --:|:--   |:--                 |   --:|      --:|       --:|         --:\n"
         label = iter(ascii_lowercase.upper())
-        sorted_stocks = reversed(sorted(market.stocks, key=lambda s: s.cost))
+        sorted_stocks = sorted(market.stocks, key=lambda s: -1* s.cost)
         for o in sorted_stocks:
             label = ascii_lowercase.upper()[market.stocks.index(o)]
             reply_text += "|**{}**|{}|${:,.2f}|{}|${:,.2f}|${:,.2f}|${:,.2f}|\n".format(label, o.text, o.cost, o.num_shares,
@@ -69,6 +70,8 @@ class Redditbot:
             category = self.mp.categories[0]
         if type(category) is str: 
             raise Exception("Not a valid category")
+        if not market:
+            raise Exception("No market text given")
         new_market = self.mp.new_market(text=market, author=name, category=category, close_time=None, rules=rules, autosave=False)
         for o in options:
             new_market.add_option(o)
@@ -136,8 +139,10 @@ class Redditbot:
         title = "Market: {}".format(market.text)
         selftext_message = self.create_market_view(market)
         thread = self.reddit.subreddit("KarmaPredict").submit(title, selftext=selftext_message)
+        wiki = self.reddit.subreddit("KarmaPredict").wiki.create("{}/{}".format(market.category.short, market.id), selftext_message)
         self.updanda_dict[market] = dict()
         self.updanda_dict[market]["submission"] = thread
+        self.updanda_dict[market]["wiki"] = wiki
         self.updanda_dict[market]["comments"] = []
         self.change_comments(market)
     def handle_call(self, item, first_line, market=None):
@@ -230,6 +235,8 @@ class Redditbot:
                 option_label = word.lower()
             elif (word.startswith("$") and word[1:].isdigit()) or word.isdigit(): # finds the amount to buy
                 amount_label = word
+            elif word == "all" and command == "sell":
+                amount_label = "all"
 
             elif word.startswith("#"): # finds the id for the market
                 market_id = int(word[1:])
@@ -243,12 +250,15 @@ class Redditbot:
         if not market: raise Exception("Market not specified or inferred.")
 
         requested_stock = market.stocks[ascii_lowercase.index(option_label)]
+        name = item.author.name
         if amount_label.startswith("$"):
             amount_of_shares = self.get_amount_from_money(command, int(amount_label[1:]), item, market, requested_stock)
+        elif amount_label == "all":
+            print(requested_stock.shares[name]["amount"])
+            amount_of_shares = -1 * requested_stock.shares[name]["amount"]
         else:
             amount_of_shares = int(amount_label)
 
-        name = item.author.name
         self.mp.create_new_player(name, 500)
         before = self.mp.bank[name]
         requested_stock.buy(name, amount_of_shares)
@@ -268,6 +278,7 @@ class Redditbot:
         return None
     def parse_item(self, item):
         "Parses every item in queue and acts on them."
+        print(item.body)
         first_line = item.body.split("\n")[0]
         first_line = first_line.split()
         
@@ -290,22 +301,30 @@ class Redditbot:
         # invocation of the bot isn't necessary through PM
         first_line = list(filter(lambda x: x.lower() not in ("predictbot", "karmapredict", "karmapredictbot"), first_line))
         command = first_line[0].lower().strip(".,?!")
-        if len(first_line) == 1 and command == "new_market":
-            self.handle_new_market(item)
-            pass
-        elif type(item) is praw.models.reddit.message.Message and command == "myshares":
-            self.handle_myshares(item)
-
-        # All items that are direct messages
+        # handle all the commands that necessarily take place over PM
         if type(item) is praw.models.reddit.message.Message:
             if command == "confirm":
                 self.handle_confirm(item)
+                return
             elif command == "deny":
-                pass
-        if command == "call":
-            self.handle_call(item, first_line, market)
-        if command in ("buy", "sell"):
-            self.handle_buy(item, first_line, market) 
+                return
+            elif command == "myshares":
+                self.handle_myshares(item)
+                return
+        # the only multiline command
+        if len(first_line) == 1 and command == "new_market":
+            self.handle_new_market(item)
+        else:
+            for l in item.body.split("\n"):
+                line = l.split()
+                line = list(filter(lambda x: x.lower() not in ("predictbot", "karmapredict", "karmapredictbot", "/u/karmapredictbot"), line)) 
+                if not line: continue
+                command = line[0]  
+                if command == "call":
+                    self.handle_call(item, line, market)
+                if command in ("buy", "sell"):
+                    print("buying")
+                    self.handle_buy(item, line, market) 
     
     def change_comments(self, market):
         "Stores the comments and threads to be updated in the comments section of the markets database"
@@ -373,19 +392,15 @@ class Redditbot:
         while True:
             next_period = []
             self.changed_markets = set()
-            #items = []
             time.sleep(10)
             end = int(datetime.datetime.now().timestamp()) - 10
             # Store all comments and messages so they can be processed later.
             try:
                 for comment in self.get_pushshift(begin, end):
-                    #items.append(comment)
                     this_period.append(comment)
             except: continue
             for item in inbox_stream:
                 if not item: break
-                #if type(item) is praw.models.reddit.message.Message:
-                    #items.append(item)
                 print("inbox item: {}, type: {}".format(item, type(item)))
                 next_period.append(item)
             
@@ -427,13 +442,27 @@ class Redditbot:
         # When a market updates, edit the main thread and comments that show this market
         comments = self.updanda_dict[market]["comments"]
         submission = self.updanda_dict[market]["submission"]
-        for u in comments + [submission]:
-            #TODO: handle deletions, bans, archival after 6 months, etc
-            market_view = self.create_market_view(market, submission if u is not submission else None)
+        market_view = self.create_market_view(market)
+        changed = False
+        title = "Market: {}".format(market.text)
+        if any((submission.archived, submission.locked, submission.removed)):
+            submission = self.reddit.subreddit("KarmaPredict").submit(title, selftext=market_view)    
+            self.updanda_dict[market]["submission"] = submission
+            changed = True
+        try: submission.edit(market_view)
+        except: pass
+        market_view = self.create_market_view(market, submission)
+        for c in comments:
+            if any((c.archived, c.locked, c.removed)):
+                self.updanda_dict[market]["comments"].remove(comment)
+                changed = True
+                continue
             try:
-                u.edit(market_view)
+                c.edit(market_view)
             except Exception as err:
                 print(err)
+        if changed:
+            self.change_comments(market)
     def __init__(self):
         self.mp = karmamarket.Marketplace()
         self.mp._load()
@@ -443,15 +472,24 @@ class Redditbot:
 
         self.updanda_dict = {}
         self.random_ids = {}
+        for wikipage in self.reddit.subreddit("KarmaPredict").wiki:
+            print(wikipage)
+            _ = wikipage.revision_date
+            pprint(vars(wikipage))
+        # wiki
+        #   
+        #$self.reddit.subreddit("KarmaPredict").wiki.create("uspol/4", "test")
         # get all the updanda to be updated from database
         for m in self.mp.markets:
-            self.updanda_dict[m] = {"submission": None, "comments": []}
+            self.updanda_dict[m] = {"submission": None, "comments": [], "wiki": None}
             split = m.comments.split(";")
             for s in split:
                 if s.startswith("t3"): # is a submission
                     submission = self.reddit.submission(id=s[3:])
+                    #retrieving data  turns it into a non-lazy instance, getting a LOT more variables
+                    _ = submission.title
                     self.updanda_dict[m]["submission"] = submission
-                elif s.startswith("t1"): # is a comment
+                elif s.startswith("t0"): # is a comment
                     try:
                         comment = self.reddit.comment(id=s[3:])
                     except:
