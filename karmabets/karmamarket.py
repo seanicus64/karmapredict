@@ -154,11 +154,22 @@ class _Market:
         for stock in self.stocks:
             # Default cost of all options must add up to 100
             stock.cost = 100/len(self.stocks)
-
-            # A new trading day starts now
-#            stock._open = stock.cost
-#            stock.update_candle()
         self.new_candle()
+    def reopen(self):
+        self.is_open = True
+        self._update_costs()
+        for option in self.stocks:
+            results = self.marketplace.sql_get_history(option, 1)
+            if not results:
+                self.new_candle()
+            else:
+                option_id, date, open_, high, low, close, volume = results[0]
+                option._open = open_
+                option._high = high
+                option._low = low
+                option._close = close
+                option.volume = volume
+            
 
     def close(self):
         "Closes the market, preventing buying and selling."
@@ -189,8 +200,6 @@ class _Market:
         "Creates a new 'candle', which is the high, low, open and close values of a trading day."
         for option in self.stocks:
             if self.id:
-                # Dump previous candle to database before updating values.
-                #self.marketplace.sql_add_history(option)
                 self.marketplace.sql_close_candle(option)
             option._open = option.cost
             option._high = option.cost
@@ -302,6 +311,13 @@ class Marketplace:
             UPDATE history SET close = ?
             WHERE option_id = ? ORDER BY date DESC LIMIT 1""", (option.cost, option.id))
         self.con.commit()
+    def sql_get_history(self, option, num_days):
+        """Gets the history of an option."""
+        self.cur.execute("""
+            SELECT option_id, date, open, high, low, close, volume FROM history
+            WHERE option_id = ? ORDER BY date LIMIT ?""", (option.id, num_days))
+        results = self.cur.fetchall()
+        return results
 #    def sql_add_history(self, option):
 #        "Closes a trading day in the database."
 #        #TODO: don't add to the history, just close the last one.
@@ -528,9 +544,7 @@ class Marketplace:
                         loaded_stock.shares[player_name]["cost"] = 0
                     loaded_stock.shares[player_name]["amount"] += amount
                     loaded_stock.shares[player_name]["cost"] += cost
-
-            loaded_market.open() #TODO: need a bool column for open markets
-            loaded_market._update_costs() 
+            loaded_market.reopen()
             
 
                     
