@@ -267,10 +267,6 @@ class Marketplace:
         self.categories = []
         #TODO: is this safe? 
         self.bank = {"admin": 0}
-        #none_cat = _Category(self, "None", "None", "", 0)
-        #none_cat.add_judge("admin")
-        #none_cat.add_judge("sje46")
-        #self.categories = [none_cat]
         self.id_handler = {}
         self.option_id_handler = {}
         self.autosave = autosave
@@ -318,22 +314,11 @@ class Marketplace:
             WHERE option_id = ? ORDER BY date LIMIT ?""", (option.id, num_days))
         results = self.cur.fetchall()
         return results
-#    def sql_add_history(self, option):
-#        "Closes a trading day in the database."
-#        #TODO: don't add to the history, just close the last one.
-#    #def sql_close_candle(self, option):
-#        self.cur.execute("""
-#            INSERT INTO history 
-#                (option_id, date, open, high, low, close, volume)
-#            VALUES
-#                (?, date("now"), ?, ?, ?, ?, ?)""", (option.id, option.open, option.high, option.low, option.cost, option.volume))
-#        
-#        self.con.commit()
 
     def sql_new_market(self, market):
         "Adds a new market t othe database."
         text, author, rules, close_time = market.text, market.author, market.rules, market.close_time
-        b, closed, comments = market.b, True, market.comments #TODO: fix closed, is_open
+        b, closed, comments = market.b, False, market.comments #TODO: fix closed, is_open
         self.cur.execute("""
             INSERT INTO markets
                 (text, author, rules, close_time, b, closed, comments)
@@ -544,7 +529,8 @@ class Marketplace:
                         loaded_stock.shares[player_name]["cost"] = 0
                     loaded_stock.shares[player_name]["amount"] += amount
                     loaded_stock.shares[player_name]["cost"] += cost
-            loaded_market.reopen()
+            if not closed:
+                loaded_market.reopen()
             
 
                     
