@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys 
 import requests
 import praw
 from string import ascii_lowercase
@@ -9,12 +10,16 @@ import time
 import traceback
 import random
 from pprint import pprint
+hub_subreddit = "KarmaPredict"
 class Redditbot:
-    footer = "\n-------\n|💰💰💰|[WTF even is this?](https://www.reddit.com/r/KarmaPredict/wiki/index/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/KarmaPredict)|This bot is still in beta; please send [us](https://www.reddit.com/message/compose?to=/r/KarmaPredict) any issues|💰💰💰\n|:-:|:-:|:-:|:-:|:-:|:-:|"
-    def create_market_view(self, market, submission=None):
+    footer = "\n-------\n|💰💰💰|[WTF even is this?](https://www.reddit.com/r/{}/wiki/index/info)|[Your Shares](https://reddit.com/message/compose/?to=KarmaPredictBot&subject=MyShares&message=MyShares!)|[Subreddit](/r/{})|This bot is still in beta; please send [us](https://www.reddit.com/message/compose?to=/r/{}) any issues|💰💰💰\n|:-:|:-:|:-:|:-:|:-:|:-:|".format(hub_subreddit, hub_subreddit, hub_subreddit)
+    def create_market_view(self, market, submission=None, wiki=False, viewtype="submission"):
         "Create a reddit message to represent the current market. Returns the formatted text."
         
-        reply_text =  "**ID**: #{} {}  \n".format(market.id, "  \n**Submission**:{}".format(submission.permalink) if submission else "")
+#        reply_text =  "**ID**: #{} {}  \n".format(market.id, "  \n**Submission**:{}".format(submission.permalink) if submission else "")
+        reply_text = "**ID**: #{}  ".format(market.id) if market.id else ""
+        reply_text += "**Submission**: {}  \n".format(submission.permalink) if submission else ""
+        reply_text += "**Wiki**: /r/{}/wiki/{}/{}  \n".format(hub_subreddit, market.category.short, market.id) if wiki and market.id else ""
         reply_text += "{}**{}**  \n\n".format("**This market is CLOSED!**  \n" if not market.is_open else "", market.text.lstrip())
         reply_text += "Label|Option|Cost AKA Probability|Volume|Cost of 5|Cost of 25| Cost of 100\n"
         reply_text += "  --:|:--   |:--                 |   --:|      --:|       --:|         --:\n"
@@ -26,16 +31,24 @@ class Redditbot:
                     market._find_total_cost(o, 5), market._find_total_cost(o, 25), market._find_total_cost(o, 100))
         
         reply_text += "\n**b Value**: {}  \n**Category**: {}  \n".format(market.b, market.category if not hasattr(market.category, "long") else market.category.long)
-
-        reply_text += "[How to play.](https://i.imgur.com/SatSnjJ.png)  \n"
+        #if not submission and not wiki:
+        # if this comment IS a submission (submission wont link to itself)
+        if viewtype == "submission":
+#        if not submission:
+            reply_text += "To buy seven shares of option A (reply directly to this):\n\n    buy A 5\n"
+            reply_text += "To sell three shares of option B:\n\n    sell B 3\n"
+            reply_text += "To buy $200 dollars worth of shares of option C:\n\n    buy $200 C\n\n"
+            
+            reply_text += "For each correct share, you will get $100  \nFor each wrong share, you get nothing!  \n"
+            reply_text += "All redditors get $5000 by default!  \n"
+            reply_text += "**Disclaimer**: This is fake money; you can't get free cash that easily!\n"
+        # if this is a comment
+        elif viewtype == "comment":
+            reply_text += "[How to play.](https://i.imgur.com/SatSnjJ.png)  \n" 
+        
+        #if submission or wiki:
+        #    reply_text += self.footer
         #TODO: implement this, but in submission only.  imgur only for comments
-#        reply_text += "To buy seven shares of option A (reply directly to this):\n\n    buy A 5\n"
-#        reply_text += "To sell three shares of option B:\n\n    sell B 3\n"
-#        reply_text += "To buy $200 dollars worth of shares of option C:\n\n    buy $200 C\n\n"
-#        
-#        reply_text += "For each correct share, you will get $100  \nFor each wrong share, you get nothing!  \n"
-#        reply_text += "All redditors get $5000 by default!  \n"
-#        reply_text += "**Disclaimer**: This is fake money; you can't get free cash that easily!\n"
         #reply_text += self.footer
         return reply_text
 
@@ -83,7 +96,7 @@ class Redditbot:
         except Exception as e:
             raise Exception("Syntax is wrong: {}".format(e))
 
-        market_view = self.create_market_view(new_market)
+        market_view = self.create_market_view(new_market, wiki=True, viewtype="confirm")
         message = "Please ensure that the following market is correct. Respond with 'Confirm.'\
         and it will open.  Otherwise, respond with the predictbot_new_market command with the \
         required changes, paying attention to the syntax here: [TODO].  The previous attempt will\
@@ -148,9 +161,10 @@ class Redditbot:
         market.save()
         market.open()
         title = "Market: {}".format(market.text)
-        selftext_message = self.create_market_view(market)
-        thread = self.reddit.subreddit("KarmaPredict").submit(title, selftext=selftext_message+self.footer)
-        wiki = self.reddit.subreddit("KarmaPredict").wiki.create("{}/{}".format(market.category.short, market.id), selftext_message)
+        selftext_message = self.create_market_view(market, wiki=True, viewtype="submission")
+        wiki_selftext_message = self.create_market_view(market, wiki=False, viewtype="wiki")
+        thread = self.reddit.subreddit(hub_subreddit).submit(title, selftext=selftext_message+self.footer)
+        wiki = self.reddit.subreddit(hub_subreddit).wiki.create("{}/{}".format(market.category.short, market.id), wiki_selftext_message)
         self.updanda_dict[market] = dict()
         self.updanda_dict[market]["submission"] = thread
         self.updanda_dict[market]["comments"] = []
@@ -166,9 +180,9 @@ class Redditbot:
         string += "|--:|:--|:-:|\n"
         for m in reversed(self.mp.markets):
             if m.category == category and m.is_open:
-                string += "|{}|[{}]({})|{}|\n".format(m.id, m.text, "http://reddit.com/r/KarmaPredict/wiki/{}/{}".format(
-                    category.short, m.id), sum([x.num_shares for x in m.stocks]))
-        self.reddit.subreddit("KarmaPredict").wiki[category.short].edit(string)
+                string += "|{}|[{}]({})|{}|\n".format(m.id, m.text, "http://reddit.com/r/{}/wiki/{}/{}".format(
+                    hub_subreddit, category.short, m.id), sum([x.num_shares for x in m.stocks]))
+        self.reddit.subreddit(hub_subreddit).wiki[category.short].edit(string)
     def handle_call(self, item, first_line, market=None):
         "Handles a judge calling a market."
         option_label, market_id = "", ""
@@ -295,7 +309,7 @@ class Redditbot:
         # If this was a comment, potentially make a new comment reply and watch it.
         if type(item) is praw.models.reddit.comment.Comment:
             if not self.check_if_submission_watched(item, market):
-                updandum = item.reply(self.create_market_view(market, submission=self.updanda_dict[market]["submission"]) + self.footer)
+                updandum = item.reply(self.create_market_view(market, submission=self.updanda_dict[market]["submission"], viewtype="comment") + self.footer)
                 self.add_updandum(updandum, market)
     def get_market_from_submission(self, submission):
         "Gets the market from a submission object. Returns the market."
@@ -341,7 +355,7 @@ class Redditbot:
                             break
 
         # invocation of the bot isn't necessary through PM
-        first_line = list(filter(lambda x: x.lower() not in ("predictbot", "karmapredict", "karmapredictbot"), first_line))
+        first_line = list(filter(lambda x: x.lower() not in ("predictbot", hub_subreddit , "karmapredictbot"), first_line))
         command = first_line[0].lower().strip(".,?!")
         # handle all the commands that necessarily take place over PM
         if type(item) is praw.models.reddit.message.Message:
@@ -507,9 +521,9 @@ class Redditbot:
         for e, (player, amount) in enumerate(ranked[:15], 1):
             text += "{}.|{}|${:,.2f}\n".format(e, player, amount)
         text += "\nLast edited {}".format(datetime.datetime.utcnow().strftime("%b/%d %H:%M:%S UTC"))
-        wikipage = self.reddit.subreddit("KarmaPredict").wiki["config/sidebar"]
+        wikipage = self.reddit.subreddit(hub_subreddit).wiki["config/sidebar"]
         wikipage.edit(text)
-        widgets = self.reddit.subreddit("KarmaPredict").widgets
+        widgets = self.reddit.subreddit(hub_subreddit).widgets
         for w in widgets.sidebar:
             w.progressive_images = True
             if w.shortName == "Scoreboard":
@@ -520,7 +534,7 @@ class Redditbot:
         # When a market updates, edit the main thread and comments that show this market
         comments = self.updanda_dict[market]["comments"]
         submission = self.updanda_dict[market]["submission"]
-        market_view = self.create_market_view(market)
+        market_view = self.create_market_view(market, wiki=True, viewtype="submission")
         changed = False
         title = "Market: {}".format(market.text)
         is_valid_submission = True
@@ -530,13 +544,15 @@ class Redditbot:
             is_valid_submission = False
         if is_valid_submission:
             if any((submission.archived, submission.locked, submission.removed)):
-                submission = self.reddit.subreddit("KarmaPredict").submit(title, selftext=market_view+self.footer)    
+                submission = self.reddit.subreddit(hub_subreddit).submit(title, selftext=market_view+self.footer)    
                 self.updanda_dict[market]["submission"] = submission
                 changed = True
             try: submission.edit(market_view)
-            except: pass
+            except Exception as e:
+                pass
+                print(e)
         
-        market_view = self.create_market_view(market, submission) + self.footer
+        market_view = self.create_market_view(market, submission, viewtype="comment") + self.footer
         for c in comments:
             if any((c.archived, c.locked, c.removed)):
                 self.updanda_dict[market]["comments"].remove(comment)
@@ -554,8 +570,8 @@ class Redditbot:
             print(err)
     def change_wiki(self, market):
         name ="{}/{}".format(market.category.short, market.id)
-        wikipage = self.reddit.subreddit("KarmaPredict").wiki[name]
-        text = self.create_market_view(market)
+        wikipage = self.reddit.subreddit(hub_subreddit).wiki[name]
+        text = self.create_market_view(market, viewtype="wiki")
         for o in market.stocks: #TODO: FIX!!
             text += "\n\n"+ o.text + "\n\n"
             text += self.get_history_summary(o, 30)
@@ -582,7 +598,7 @@ class Redditbot:
         self.read_everything()
     def load_updanda(self):
         self.updanda_dict = {}
-        for wikipage in self.reddit.subreddit("KarmaPredict").wiki:
+        for wikipage in self.reddit.subreddit(hub_subreddit).wiki:
             _ = wikipage.revision_date
     
         for m in self.mp.markets:
@@ -619,4 +635,7 @@ def main():
     mp._load()
     read_everything(mp)
 if __name__ == "__main__":
+    try:
+        hub_subreddit = sys.argv[1]
+    except: pass
     bot = Redditbot()
