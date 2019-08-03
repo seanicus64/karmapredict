@@ -69,7 +69,7 @@ class Redditbot:
             elif first_word == "rules:":
                 rules = line.partition(":")[2]
             elif first_word == "market:":
-                market = line.partition(":")[2]
+                market = line.partition(":")[2].lstrip()
             elif first_word == "*" and len(split) > 1:
                 options.append(line.partition("* ")[2])
         if category:

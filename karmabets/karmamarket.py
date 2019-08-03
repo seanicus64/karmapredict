@@ -319,12 +319,13 @@ class Marketplace:
         "Adds a new market t othe database."
         text, author, rules, close_time = market.text, market.author, market.rules, market.close_time
         b, closed, comments = market.b, False, market.comments #TODO: fix closed, is_open
+        category = market.category.category_id
         self.cur.execute("""
             INSERT INTO markets
-                (text, author, rules, close_time, b, closed, comments)
+                (text, author, rules, close_time, b, closed, comments, category_id)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?)
-            """, (text, author, rules, close_time, b, closed, comments))
+                (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (text, author, rules, close_time, b, closed, comments, category))
         self.cur.execute("""
             SELECT last_insert_rowid()""")
         market_id = self.cur.fetchone()[0]
