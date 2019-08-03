@@ -300,7 +300,7 @@ class Redditbot:
         else:
             amount_of_shares = int(amount_label)
 
-        self.mp.create_new_player(name, 500)
+        self.mp.create_new_player(name, 20000)
         before = self.mp.bank[name]
         requested_stock.buy(name, amount_of_shares)
         self.changed_markets.add(market)
