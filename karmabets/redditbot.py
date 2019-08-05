@@ -554,10 +554,12 @@ class Redditbot:
         
         market_view = self.create_market_view(market, submission, viewtype="comment") + self.footer
         for c in comments:
-            if any((c.archived, c.locked, c.removed)):
-                self.updanda_dict[market]["comments"].remove(comment)
-                changed = True
-                continue
+            try:
+                if any((c.archived, c.locked, c.removed)):
+                    self.updanda_dict[market]["comments"].remove(comment)
+                    changed = True
+                    continue
+            except: pass
             try:
                 c.edit(market_view)
             except Exception as err:
