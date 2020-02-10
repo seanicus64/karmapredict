@@ -280,13 +280,14 @@ class Redditbot:
                 option_label = word.lower()
             elif (word.startswith("$") and word[1:].isdigit()) or word.isdigit(): # finds the amount to buy
                 amount_label = word
+            #TODO: what if no "sell"?
             elif word == "all" and command == "sell":
                 amount_label = "all"
 
             elif word.startswith("#"): # finds the id for the market
                 market_id = int(word[1:])
         if not option_label: raise Exception("No option specified.")
-
+            
         # we find which market it is...
         if market_id:
             for m in self.mp.markets:
@@ -299,12 +300,15 @@ class Redditbot:
         requested_stock = market.stocks[ascii_lowercase.index(option_label)]
         name = item.author.name
         if amount_label.startswith("$"):
-            amount_of_shares = self.get_amount_from_money(command, int(amount_label[1:]), item, market, requested_stock)
+            amount = amount_label[1:]
+            if command == "sell":
+                amount *= -1
+            amount_of_shares = self.get_amount_from_money(command, amount, item, market, requested_stock)
         elif amount_label == "all":
             amount_of_shares = -1 * requested_stock.shares[name]["amount"]
         else:
             amount_of_shares = int(amount_label)
-
+            if command == "sell": amount_of_shares *= -1 
         self.mp.create_new_player(name, 20000)
         before = self.mp.bank[name]
         requested_stock.buy(name, amount_of_shares)
