@@ -199,7 +199,12 @@ class Redditbot:
                 market = m
         if not market:
             raise Exception("Market not specified or inferred.")
-        requested_stock = market.stocks[ascii_lowercase.index(option_label)]
+        if not market.is_open:
+            raise Exception("Market is closed.")
+        try:
+            requested_stock = market.stocks[ascii_lowercase.index(option_label)]
+        except IndexError:
+            raise Exception("Invalid option")
         if item.author.name in market.category.judges:
             market.call(requested_stock)
             self.changed_markets.add(market)
@@ -391,7 +396,10 @@ class Redditbot:
         if delete:
             market.change_comments("")
 
-        string = "{};".format(self.updanda_dict[market]["submission"].fullname)
+        print(self.updanda_dict[market]["submission"])
+        submission = self.updanda_dict[market]["submission"]
+        string = "{};".format(submission.fullname if submission else "")
+#        string = "{};".format(self.updanda_dict[market]["submission"].fullname)
         for u in reversed(self.updanda_dict[market]["comments"]):
             if len(string) + len(u.fullname) > 255:
                 break
@@ -532,6 +540,8 @@ class Redditbot:
 
     def update_views(self, market):
         # When a market updates, edit the main thread and comments that show this market
+        if not market in self.updanda_dict:
+            return
         comments = self.updanda_dict[market]["comments"]
         submission = self.updanda_dict[market]["submission"]
         market_view = self.create_market_view(market, wiki=True, viewtype="submission")
@@ -583,6 +593,11 @@ class Redditbot:
         self.mp = karmamarket.Marketplace()
         print("Loading database")
         self.mp._load()
+        for market in self.mp.markets:
+            first_line = "{}: {}".format(market.id, market.text)
+            second_line = "\t{}, {}, Category: {}".format(market.author, "Open" if market.is_open else "Closed", market.category.long)
+            print(first_line)
+            print(second_line)
         self.text_ids = {}
         self.reddit = praw.Reddit("bot1")
 
@@ -604,9 +619,12 @@ class Redditbot:
             _ = wikipage.revision_date
     
         for m in self.mp.markets:
+            print("Loading updanda for {}:{}".format(m.id, m.text))
             self.updanda_dict[m] = {"submission": None, "comments": []}#, "wiki": None}
+            print("added to updanda_dict")
             split = m.comments.split(";")
             for s in split:
+                print("\n{}".format(s))
                 if s.startswith("t3"): # is a submission
                     submission = self.reddit.submission(id=s[3:])
                     #retrieving data  turns it into a non-lazy instance, getting a LOT more variables
@@ -625,10 +643,13 @@ class Redditbot:
                         continue
                     self.updanda_dict[m]["comments"].append(comment)
         for market in self.mp.markets:
+            print("Loading updanda for {}:{}".format(m.id, m.text))
             sub = self.updanda_dict[market]["submission"]
             try:
                 __ = sub.title
             except:
+                #TODO
+                # Need to create a new submission or just update the wiki if no submission is available
                 self.updanda_dict[market]["submission"] = None
 
 
