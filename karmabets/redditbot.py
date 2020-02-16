@@ -9,6 +9,7 @@ import datetime
 import time
 import traceback
 import random
+import validators
 from pprint import pprint
 hub_subreddit = "KarmaPredict"
 class Redditbot:
@@ -170,6 +171,48 @@ class Redditbot:
         self.updanda_dict[market]["comments"] = []
         self.change_comments(market)
         self.edit_wiki_category(market.category)
+    
+    def handle_placement(self, item):
+
+                        #comment = self.reddit.comment(id=s[3:])
+        url = item.subject
+        author = item.author
+        body = item.body.split()
+        which_market = None
+        url = None
+        for word in body[1:]:
+            if word.startswith("#") and len(word) > 1 and word[1:].isdigit():
+                which_market = int(word[1:])
+            if validators.url(word):
+                url = word
+        if not any((which_market, url)):
+            return Exception("Bad placement syntax")
+
+        market = None
+        for m in self.mp.markets:
+            if m.id == which_market:
+                market = m
+        if not market:
+            raise Exception("Market not valid.")
+        comment = self.reddit.comment(url=url)
+
+        if self.check_if_submission_watched(comment, market):
+            item.reply("There is already a comment on that thread.")
+            return
+#    def check_if_submission_watched(self, comment, market):
+
+
+        market_view = self.create_market_view(market, submission=self.updanda_dict[market]["submission"], viewtype="comment")
+        market_view += self.footer
+        new_comment = comment.reply(market_view)
+        print(len(self.updanda_dict[market]))
+
+        print(self.updanda_dict[market])
+
+        self.add_updandum(new_comment, market)
+        print(len(self.updanda_dict[market]))
+        print(self.updanda_dict[market])
+        pass
     def edit_wiki_category(self, category):
         string =  "**Short**: {}  \n**Long**: {}  \n".format(category.short, category.long)
         string += "**Judges**:  \n"
@@ -248,6 +291,8 @@ class Redditbot:
             while True:
                 cost = market._find_total_cost(requested_stock, temp_amount)
                 # Because we don't want to actually go over the amount we have
+                print(type(cost), cost)
+                print(type(money), money)
                 if cost >= money: 
                     temp_amount -= 1
                     break
@@ -300,7 +345,7 @@ class Redditbot:
         requested_stock = market.stocks[ascii_lowercase.index(option_label)]
         name = item.author.name
         if amount_label.startswith("$"):
-            amount = amount_label[1:]
+            amount = int(amount_label[1:])
             if command == "sell":
                 amount *= -1
             amount_of_shares = self.get_amount_from_money(command, amount, item, market, requested_stock)
@@ -377,8 +422,12 @@ class Redditbot:
             elif command == "myshares":
                 self.handle_myshares(item)
                 return
-            elif command == "test":
-                self.edit_wiki_category(self.mp.markets[-1].category)
+#            elif command == "test":
+#                self.edit_wiki_category(self.mp.markets[-1].category)
+            elif command == "place":
+                
+                self.handle_placement(item)
+                print("Successfully ran")
         # the only multiline command
         if len(first_line) == 1 and command == "new_market":
             self.handle_new_market(item)
@@ -417,6 +466,7 @@ class Redditbot:
             return True
         for u in self.updanda_dict[market]["comments"]:
             if u.submission == comment.submission:
+                print(u.submission)
                 print("submission is being watched")
                 return True
         print("Submission is not being watched")
@@ -425,8 +475,14 @@ class Redditbot:
     def add_updandum(self, comment, market):
         "Adds a comment which is to be edited when the market changes."
         # dog-latin for "that which is to be updated"
+        print("add_updandum method")
         if not self.check_if_submission_watched(comment, market):
+            print("="*30)
+            print(self.updanda_dict[market]["comments"])
             self.updanda_dict[market]["comments"].append(comment)
+            print(self.updanda_dict[market]["comments"])
+            print("submission is not being watched")
+            print("="*30)
         self.change_comments(market)
 
     def message_player_bought_shares(self, player, before, share, amount ):
@@ -465,30 +521,40 @@ class Redditbot:
 
     def read_everything(self):
         "The main loop.  Reads mentions, privage messages, and acts on them."
+        #TODO: when pushshift is off, comments are staggered 1 late
+        #TODO: direct replies arent inferring which market
+        #TODO: able to buy/sell on closed markets
         inbox_stream = self.reddit.inbox.stream(pause_after=-1, skip_existing=True)
         # Ten seconds off to give the pushshift API time to process new comments.
         print("Beginning parsing")
         begin = int(datetime.datetime.now().timestamp()) - 10
+        end = 0
         this_period = []
         this_period = set()
         top_fifteen = []
+        using_pushshift = True
+        using_pushshift = False #TODO: pushshift has been very slow and unreliable!
+        next_period = []
         while True:
-            next_period = []
             next_period = set()
             self.changed_markets = set()
-            time.sleep(10)
-            end = int(datetime.datetime.now().timestamp()) - 10
-            # Store all comments and messages so they can be processed later.
+            if using_pushshift:
+                time.sleep(10)
+                end = int(datetime.datetime.now().timestamp()) - 10
+                # Store all comments and messages so they can be processed later.
+                try:
+                    for comment in self.get_pushshift(begin, end):
+                        #this_period.append(comment)
+                        this_period.add(comment)
+                except: continue
             try:
-                for comment in self.get_pushshift(begin, end):
-                    #this_period.append(comment)
-                    this_period.add(comment)
-            except: continue
-            for item in inbox_stream:
-                if not item: break
-                print("inbox item: {}, type: {}".format(item, type(item)))
-                #next_period.append(item)
-                next_period.add(item)
+                for item in inbox_stream:
+                    if not item: break
+                    print("inbox item: {}, type: {}".format(item, type(item)))
+                    #next_period.append(item)
+                    next_period.add(item)
+            except prawcore.exeptions.ServerError:
+                continue
             
             # sort all comments and messages by the time they were created to prevent time manipulation
             sorted_period = sorted(this_period, key=lambda x: x.created_utc)
@@ -622,8 +688,11 @@ class Redditbot:
         for wikipage in self.reddit.subreddit(hub_subreddit).wiki:
             _ = wikipage.revision_date
     
-        for m in self.mp.markets:
-            print("Loading updanda for {}:{}".format(m.id, m.text))
+        print("LOAD UPDANDA FUNCTION")
+        print(len(self.mp.markets))
+        print(self.mp.markets)
+        for e, m in enumerate(self.mp.markets):
+            print(e, "Loading updanda for {}:{}".format(m.id, m.text))
             self.updanda_dict[m] = {"submission": None, "comments": []}#, "wiki": None}
             print("added to updanda_dict")
             split = m.comments.split(";")
@@ -647,7 +716,7 @@ class Redditbot:
                         continue
                     self.updanda_dict[m]["comments"].append(comment)
         for market in self.mp.markets:
-            print("Loading updanda for {}:{}".format(m.id, m.text))
+            print("Loading updanda for {}:{}".format(market.id, market.text))
             sub = self.updanda_dict[market]["submission"]
             try:
                 __ = sub.title
