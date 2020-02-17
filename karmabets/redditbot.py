@@ -274,6 +274,9 @@ class Redditbot:
                             "Win" if o is requested_stock else "Lose")
                 message += "\n\n"
                 after = self.mp.bank[name]
+                #TODO: keyerror if no shares
+                if not name in requested_stock.shares:
+                    continue
                 before = self.mp.bank[name]-requested_stock.shares[name]["amount"]*100
                 difference = requested_stock.shares[name]["amount"]
                 bank_table =  "|Player|Bank Before|Bank After|Difference|\n"
