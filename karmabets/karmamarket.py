@@ -543,6 +543,7 @@ class Marketplace:
             p_id, name, money, in_play = p
             self.bank[name] = money
 
+        print(self.bank)
         # Get judge data
         self.cur.execute("""
             SELECT * FROM judges""")
