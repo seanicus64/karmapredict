@@ -556,7 +556,7 @@ class Redditbot:
                     print("inbox item: {}, type: {}".format(item, type(item)))
                     #next_period.append(item)
                     next_period.add(item)
-            except prawcore.exeptions.ServerError:
+            except prawcore.exceptions.ServerError:
                 continue
             
             # sort all comments and messages by the time they were created to prevent time manipulation
