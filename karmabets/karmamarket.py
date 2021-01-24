@@ -75,7 +75,7 @@ class _Stock:
     def buy(self, player, amount):
         "Handles a player buying a share. If amount is negative, they're selling."
         if not self.market.is_open:
-            return
+            return False
             
         cost = self.market._find_total_cost(self, amount)
         if player not in self.shares:
@@ -83,10 +83,10 @@ class _Stock:
             self.shares[player] = {"amount": 0, "cost": 0}
         #TODO: amount is going below 0
         if cost > self.market.marketplace.bank[player]:
-            return
+            return False
         if amount + self.shares[player]["amount"] < 0:
             # prevents player from selling more than they have.
-            return
+            return False
             
         self.market.marketplace.bank[player] -= cost
         self.num_shares += amount
@@ -103,6 +103,7 @@ class _Stock:
                 self.market.marketplace.sql_update_candle(stock)
 
             self.market.marketplace._change_player_amount(player, self.market.marketplace.bank[player])
+        return True
 
     def __str__(self):
         return "{}\t{:.2f} [{}]".format(self.text, self.cost, self.num_shares)
@@ -121,9 +122,17 @@ class _Category:
         self.category_id = category_id
     def add_judge(self, judge):
         "Adds a judge."
+        print(self.judges)
         self.judges.append(judge)
+        print(judge, self.marketplace.autosave)
         if self.marketplace.autosave:
-            self.marketplace.sql_add_judge(self.category_id, judge)
+            try:
+                self.marketplace.sql_add_judge(self.category_id, judge)
+                print("success")
+            except:
+                print("failure")
+                return False
+        return True
 
 class _Market:
     """A general inquiry of which multiple prediction are available to be bought or sold based off
@@ -271,14 +280,21 @@ class Marketplace:
         self.option_id_handler = {}
         self.autosave = autosave
 
-
+    
     def new_market(self, text, author="admin", category=None, close_time=None, rules=None, b=100, comments="", autosave=False):
         """Creates and returns a new prediction market."""
         autosave_market = autosave
         market = _Market(self, text, author, category, close_time, rules, b, comments)
+        print(f"within new_market: text: {text}, author: {author}, category: {category}")
+        print(category, type(category))
+        print(f"Category is {category.short} - {id(category)}")
         if not category: 
             # make it the "None" category.
             category = self.categories[0]
+        print(author, category.judges)
+        print("=========")
+        print(type(author))
+        print(str([type(j) for j in category.judges]))
         if author not in category.judges:
             raise Exception("Author is not a judge in this category")
         self.markets.append(market)
@@ -335,7 +351,7 @@ class Marketplace:
     def create_new_player(self, name, money):
         """Creates a new player."""
         if name in self.bank.keys():
-            return
+            return False
         self.bank[name] = money
         self.cur.execute("""
             INSERT INTO bank
@@ -344,6 +360,7 @@ class Marketplace:
                 (?, ?, 0)
             """, (name, money))
         self.con.commit()
+        return True
 
     def create_new_category(self, short, long_, extra=""):
         "Creates a new category. Returns that category."
@@ -554,6 +571,7 @@ class Marketplace:
             players = self.cur.fetchone()
             if not players: continue
             player = players[0]
+            print(player)
             for c in self.categories:
                 if c.category_id == cat_id:
                     c.judges.append(player)
