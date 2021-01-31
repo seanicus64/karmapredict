@@ -5,7 +5,7 @@ import math
 
 class _Stock:
     """An option for a market. You can buy and sell these but the price will change."""
-    def __init__(self, text, market):
+    def __init__(self, text, market, is_correct=False):
         self.market = market
         self.b = market.b
         self.text = text
@@ -17,6 +17,7 @@ class _Stock:
         self._high = None
         self._low = None
         self.volume = 0
+        self.is_correct = is_correct
     @property
     def open(self):
         "Cost of share at beginning of a trading day."
@@ -83,10 +84,11 @@ class _Stock:
             self.shares[player] = {"amount": 0, "cost": 0}
         #TODO: amount is going below 0
         if cost > self.market.marketplace.bank[player]:
-            return False
+            owned = self.market.marketplace.bank[player]
+            raise Exception(f"Cost of shares (${cost}) exceeds amount owned by player (${owned})")
         if amount + self.shares[player]["amount"] < 0:
             # prevents player from selling more than they have.
-            return False
+            raise Exception(f"Player does not own enough shares to sell")
             
         self.market.marketplace.bank[player] -= cost
         self.num_shares += amount
@@ -103,6 +105,8 @@ class _Stock:
                 self.market.marketplace.sql_update_candle(stock)
 
             self.market.marketplace._change_player_amount(player, self.market.marketplace.bank[player])
+            print("d")
+        print("e")
         return True
 
     def __str__(self):
@@ -122,15 +126,11 @@ class _Category:
         self.category_id = category_id
     def add_judge(self, judge):
         "Adds a judge."
-        print(self.judges)
         self.judges.append(judge)
-        print(judge, self.marketplace.autosave)
         if self.marketplace.autosave:
             try:
                 self.marketplace.sql_add_judge(self.category_id, judge)
-                print("success")
             except:
-                print("failure")
                 return False
         return True
 
@@ -159,11 +159,16 @@ class _Market:
 
     def open(self):
         "Opens the market for buying/selling shares."
+        print("market is now open")
         self.is_open = True
+        if not len(self.stocks) >= 2:
+            return False
         for stock in self.stocks:
             # Default cost of all options must add up to 100
             stock.cost = 100/len(self.stocks)
         self.new_candle()
+        self.marketplace._open(self)
+        return True
     def reopen(self):
         self.is_open = True
         self._update_costs()
@@ -195,6 +200,8 @@ class _Market:
         "Creates a new option. Returns the option."
         if self.is_open:
             raise Exception("Can't add option if market is open")
+        if len(self.stocks) >= 26:
+            raise Exception("Can't add more than 26 options.")
         stock = _Stock(text, self)
         self.stocks.append(stock)
         for s in self.stocks:
@@ -224,11 +231,12 @@ class _Market:
     def call(self, stock):
         "Determines which option in a market is true, closing it, and settling money."
         if not self.id: return #TODO: market shouldn't have to be saved
+        stock.is_correct = True
         for player in stock.shares.keys():
             amount = stock.shares[player]["amount"]
             self.marketplace.bank[player] += amount * 100
             self.marketplace._change_player_amount(player, self.marketplace.bank[player])
-        self.marketplace._call(self)
+        self.marketplace._call(self, stock)
         self.close()
 
     def _find_current_price(self, stock):
@@ -280,21 +288,26 @@ class Marketplace:
         self.option_id_handler = {}
         self.autosave = autosave
 
-    
+
+    def get_market(self, market_id):
+        """Returns the market corresponding to the market_id, otherwise returns None."""
+        market = None
+        for m in self.markets:
+            if market_id == m.id:
+                print("this is correct, now breaking")
+                market = m
+                break
+        return market
+            
     def new_market(self, text, author="admin", category=None, close_time=None, rules=None, b=100, comments="", autosave=False):
         """Creates and returns a new prediction market."""
         autosave_market = autosave
         market = _Market(self, text, author, category, close_time, rules, b, comments)
-        print(f"within new_market: text: {text}, author: {author}, category: {category}")
-        print(category, type(category))
-        print(f"Category is {category.short} - {id(category)}")
         if not category: 
             # make it the "None" category.
             category = self.categories[0]
-        print(author, category.judges)
-        print("=========")
-        print(type(author))
-        print(str([type(j) for j in category.judges]))
+        print(author)
+        print(category.judges)
         if author not in category.judges:
             raise Exception("Author is not a judge in this category")
         self.markets.append(market)
@@ -333,8 +346,9 @@ class Marketplace:
 
     def sql_new_market(self, market):
         "Adds a new market t othe database."
+        print("INSERTING INTO MARKETS")
         text, author, rules, close_time = market.text, market.author, market.rules, market.close_time
-        b, closed, comments = market.b, False, market.comments #TODO: fix closed, is_open
+        b, closed, comments = market.b, True, market.comments #TODO: fix closed, is_open
         category = market.category.category_id
         self.cur.execute("""
             INSERT INTO markets
@@ -397,9 +411,9 @@ class Marketplace:
         """Adds an option for a market to the database. Returns the option ID"""
         self.cur.execute("""
             INSERT INTO options 
-                (market_id, text)
+                (market_id, text, is_correct)
             VALUES
-                (?, ?)""", (market.id, option.text))
+                (?, ?, ?)""", (market.id, option.text, False))
         self.con.commit()
         self.cur.execute("""
             SELECT last_insert_rowid()""")
@@ -436,11 +450,17 @@ class Marketplace:
                 """, (amount, cost, player_id, option_id))
 
         self.con.commit()
-    def _call(self, market):
+    def _call(self, market, option):
         "Handles database when a market is called."
         #TODO: rename
         self._delete_outstanding(market)
         self.cur.execute("UPDATE markets set closed=1 WHERE market_id=?", (market.id,))
+        self.cur.execute("UPDATE options set is_correct=1 WHERE option_id=?", (option.id,))
+        self.con.commit()
+
+    def _open(self, market):
+        "Handles database when a market is opened."
+        self.cur.execute("UPDATE markets set closed=0 WHERE market_id=?", (market.id,))
         self.con.commit()
 
     def _change_player_amount(self, player, amount):
@@ -454,6 +474,13 @@ class Marketplace:
             WHERE player_id = ?""", (amount, player_id))
         self.con.commit()
 
+    def delete_market(self, market):
+        """Deletes a market from the marketplace"""
+        self.cur.execute("""
+            DELETE FROM markets 
+            WHERE market_id = ?""", (market.id,))
+        self.con.commit()
+        self.markets.remove(market)
     def _delete_outstanding(self, market):
         """Deletes the outstanding shares in the database."""
         #TODO: rename
@@ -479,6 +506,15 @@ class Marketplace:
             WHERE market_id = ?
             """, (comments, market.id))
         self.con.commit()
+
+    def _create_initial_data(self):
+        """Creates initial data"""
+        self.create_new_player("seanicus#6648", 10000)
+        category = self.categories[0] # MISC
+        category.judges.append("seanicus#6648")
+        self.cur.execute("""INSERT INTO JUDGES (player_id, cat_id) VALUES (1, 1)""")
+        self.con.commit()
+
     def _create_test_data(self):
         """Creates test data in the database."""
         #TODO: rename
@@ -527,8 +563,8 @@ class Marketplace:
                 WHERE market_id = ?""", (m_id,))
             option_results = self.cur.fetchall()
             for s in option_results:
-                option_id, market_id, text = s
-                loaded_stock = _Stock(text, loaded_market)
+                option_id, market_id, is_correct, text = s
+                loaded_stock = _Stock(text, loaded_market, is_correct)
                 self.option_id_handler[loaded_stock] = option_id
                 loaded_market.stocks.append(loaded_stock)
                 
@@ -594,7 +630,8 @@ class Marketplace:
         self.cur.execute("""
             CREATE TABLE IF NOT EXISTS options
                 (option_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                market_id INT, text VARCHAR(255),
+                market_id INT, is_correct INT, text VARCHAR(255),
+
                 FOREIGN KEY (market_id) REFERENCES markets(market_id))
                 """)
         self.cur.execute("""
